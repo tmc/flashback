@@ -32,8 +32,8 @@ func (s *TestStatsAnalyzerSuite) TestBasics(c *C) {
 			latencyChan <- Latency{opType, time.Duration(i)}
 		}
 	}
-	// Need to sleep for a while to make sure the channel got everything
-	time.Sleep(10)
+	close(latencyChan)
+	<-analyser.finished
 	for _, latencyList := range analyser.latencies {
 		c.Assert(latencyList, HasLen, 10)
 	}
@@ -55,6 +55,7 @@ func (s *TestStatsAnalyzerSuite) TestLatencies(c *C) {
 		start += 2000
 	}
 
+	// ugly hack because GetStatus races with latencyChan being consumed
 	time.Sleep(10)
 	status := analyser.GetStatus()
 
@@ -78,7 +79,9 @@ func (s *TestStatsAnalyzerSuite) TestLatencies(c *C) {
 		}
 		start += 2000
 	}
-	time.Sleep(10)
+
+	close(latencyChan)
+	<-analyser.finished
 	status = analyser.GetStatus()
 
 	start = 2000

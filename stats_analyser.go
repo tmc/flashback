@@ -2,6 +2,7 @@ package flashback
 
 import (
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -37,19 +38,7 @@ func NewStatsAnalyzer(
 		lastEndPos[opType] = 0
 	}
 
-	go func() {
-		for {
-			op, ok := <-latencyChan
-			if !ok {
-				break
-			}
-			latencies[op.OpType] = append(
-				latencies[op.OpType], int64(op.Latency),
-			)
-		}
-	}()
-
-	return &StatsAnalyzer{
+	sa := &StatsAnalyzer{
 		statsCollectors: statsCollectors,
 		opsExecuted:     opsExecuted,
 		opsExecutedLast: 0,
@@ -60,7 +49,10 @@ func NewStatsAnalyzer(
 		lastEndPos:      lastEndPos,
 		counts:          counts,
 		countsLast:      countsLast,
+		finished:        make(chan struct{}),
 	}
+	go sa.consumeLatencyChan()
+	return sa
 }
 
 // ExecutionStatus encapsulates the aggregated information for the execution
@@ -81,6 +73,7 @@ type ExecutionStatus struct {
 }
 
 type StatsAnalyzer struct {
+	mu              sync.Mutex
 	statsCollectors []*StatsCollector
 	// store total ops executed during the run
 	opsExecuted *int64
@@ -95,9 +88,29 @@ type StatsAnalyzer struct {
 	lastEndPos map[OpType]int
 	counts     map[OpType]int64
 	countsLast map[OpType]int64
+	finished   chan struct{}
+}
+
+func (s *StatsAnalyzer) consumeLatencyChan() {
+	defer func() {
+		close(s.finished)
+	}()
+	for {
+		op, ok := <-s.latencyChan
+		if !ok {
+			break
+		}
+		s.mu.Lock()
+		s.latencies[op.OpType] = append(
+			s.latencies[op.OpType], int64(op.Latency),
+		)
+		s.mu.Unlock()
+	}
 }
 
 func (self *StatsAnalyzer) GetStatus() *ExecutionStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Basics
 	duration := time.Now().Sub(self.epoch)
 	opsPerSec := 0.0
